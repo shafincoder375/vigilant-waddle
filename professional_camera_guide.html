@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Professional Camera Guidance</title>
+  <style>
+    body { margin: 0; background: #000; overflow: hidden; }
+    .camera-container { position: relative; width: 100vw; height: 100vh; }
+    video { width: 100%; height: 100%; object-fit: cover; }
+    canvas#overlay { position: absolute; top: 0; left: 0; z-index: 5; width: 100%; height: 100%; }
+    #guidance {
+      position: absolute; top: 10px; left: 10px;
+      font-size: 22px; color: #0f0;
+      background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px; z-index: 10;
+    }
+    #toggle-camera, #capture-button {
+      position: absolute; background: #fff; border: none;
+      box-shadow: 0 0 10px rgba(255,255,255,0.7);
+      z-index: 10;
+    }
+    #toggle-camera {
+      top: 20px; right: 20px; width: 50px; height: 50px;
+      font-size: 24px; border-radius: 50%;
+    }
+    #capture-button {
+      bottom: 30px; left: 50%; transform: translateX(-50%);
+      width: 80px; height: 80px; border-radius: 50%;
+    }
+  </style>
+</head>
+<body onload="startCamera()">
+  <div class="camera-container">
+    <video id="camera" autoplay playsinline></video>
+    <canvas id="overlay"></canvas>
+    <div id="guidance">Loading...</div>
+    <button id="toggle-camera">&#8645;</button>
+    <button id="capture-button"></button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+  <script>
+  const video = document.getElementById('camera');
+  const canvas = document.getElementById('overlay');
+  const ctx = canvas.getContext('2d');
+  const guidanceText = document.getElementById('guidance');
+  const toggleButton = document.getElementById('toggle-camera');
+  const captureButton = document.getElementById('capture-button');
+
+  let currentStream;
+  let useFront = true;
+  let faceOffset = null;
+  let bgMaskRatio = 0;
+
+  async function startCamera() {
+    if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+    const constraints = { video: { facingMode: useFront ? 'user' : 'environment' } };
+    try {
+      currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = currentStream;
+    } catch (e) {
+      alert('Camera access required');
+    }
+  }
+
+  toggleButton.onclick = () => { useFront = !useFront; startCamera(); };
+
+  captureButton.onclick = () => {
+    if (guidanceText.textContent === '✔️ Perfect!') {
+      const cap = document.createElement('canvas');
+      cap.width = video.videoWidth; cap.height = video.videoHeight;
+      cap.getContext('2d').drawImage(video,0,0);
+      cap.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'photo.jpg'; a.click();
+        URL.revokeObjectURL(url);
+      }, 'image/jpeg');
+    } else alert('Adjust until you see ✔️ Perfect!');
+  };
+
+  const faceDetector = new FaceDetection.FaceDetection({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${f}` });
+  faceDetector.setOptions({ modelSelection: 0, minDetectionConfidence: 0.5 });
+  faceDetector.onResults(onFace);
+
+  const seg = new SelfieSegmentation.SelfieSegmentation({ locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${f}` });
+  seg.setOptions({ modelSelection: 1 });
+  seg.onResults(onBG);
+
+  new Camera(video, {
+    onFrame: async () => {
+      await seg.send({image: video});
+      await faceDetector.send({image: video});
+    }, width: 640, height: 480
+  }).start();
+
+  function onBG(results) {
+    const data = results.segmentationMask.data;
+    let count=0;
+    for(let i=0;i<data.length;i+=4) if (data[i+3]>128) count++;
+    bgMaskRatio = count/(data.length/4);
+  }
+
+  function onFace(results) {
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    if (!results.detections.length) { guidanceText.textContent='Face not detected'; return; }
+
+    const box = results.detections[0].boundingBox;
+    const xC = box.xCenter * canvas.width;
+    const yC = box.yCenter * canvas.height;
+    faceOffset = { x: xC - canvas.width/2, y: yC - canvas.height/2 };
+
+    let msg;
+    if (bgMaskRatio < 0.4) msg = 'Find clearer background';
+    else if (faceOffset.x > 40) msg='← Move Left';
+    else if (faceOffset.x < -40) msg='→ Move Right';
+    else if (faceOffset.y > 40) msg='↑ Move Up';
+    else if (faceOffset.y < -40) msg='↓ Move Down';
+    else msg='✔️ Perfect!';
+
+    guidanceText.textContent = msg;
+  }
+  </script>
+</body>
+</html>
