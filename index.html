@@ -91,11 +91,13 @@
   seg.onResults(onBG);
 
   new Camera(video, {
-    onFrame: async () => {
-      await seg.send({image: video});
-      await faceDetector.send({image: video});
-    }, width: 640, height: 480
-  }).start();
+  onFrame: async () => {
+    await seg.send({image: video});
+    await faceDetector.send({image: video});
+  },
+  width: window.innerWidth,
+  height: window.innerHeight
+}).start();
 
   function onBG(results) {
     const data = results.segmentationMask.data;
